@@ -1,4 +1,5 @@
 // Full working MP3 player with fixed next and remove behavior
+
 #include <stdio.h>
 #include <windows.h>
 #include <commdlg.h>
@@ -7,25 +8,33 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Control IDs for buttons and listbox
 #define ID_BUTTON_OPEN   1
 #define ID_BUTTON_PAUSE  2
 #define ID_BUTTON_NEXT   3
 #define ID_BUTTON_REMOVE 4
 #define ID_LISTBOX_QUEUE 5
-#define FRAMES_PER_BUFFER 4096
 
+#define FRAMES_PER_BUFFER 4096  // Buffer size for audio playback
+
+// Window handles for controls
 HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox;
+
+// Thread handle for playback
 HANDLE playThread = NULL;
+// PortAudio stream handle
 PaStream *stream = NULL;
 
-volatile int isPlaying = 0;
-volatile int isPaused = 0;
-volatile int stopPlayback = 0;
-volatile int skipToNext = 0;
-volatile int nextPressed = 0; // Added: distinguish next button from remove
+// Playback state flags
+volatile int isPlaying = 0;      // Whether playback is active
+volatile int isPaused = 0;       // Whether playback is paused
+volatile int stopPlayback = 0;   // Signal to stop playback thread
+volatile int skipToNext = 0;     // Flag to skip current track
+volatile int nextPressed = 0;    // Distinguishes skip caused by Next button vs Remove
 
-size_t currentTrackIndex = 0;
+size_t currentTrackIndex = 0;    // Index of current playing track
 
+// Playlist structure holds dynamically growing list of file paths
 typedef struct {
     char **files;
     size_t count;
@@ -33,10 +42,14 @@ typedef struct {
 } Playlist;
 
 Playlist playlist = { NULL, 0, 0 };
+
+// Critical section for thread-safe playlist access
 CRITICAL_SECTION playlistLock;
 
+// Adds a file path to the playlist and updates the listbox UI
 void AddToPlaylist(const char *filename) {
     EnterCriticalSection(&playlistLock);
+    // Expand playlist array if needed
     if (playlist.count == playlist.capacity) {
         size_t newCap = playlist.capacity ? playlist.capacity * 2 : 4;
         char **newFiles = realloc(playlist.files, newCap * sizeof(char *));
@@ -48,34 +61,42 @@ void AddToPlaylist(const char *filename) {
         playlist.files = newFiles;
         playlist.capacity = newCap;
     }
+    // Duplicate filename string and add to playlist array
     playlist.files[playlist.count] = _strdup(filename);
+    // Add filename to visible listbox
     SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)filename);
     playlist.count++;
     LeaveCriticalSection(&playlistLock);
 }
 
+// Removes the file at index from playlist and updates listbox UI
 void RemoveFromPlaylist(size_t index) {
     EnterCriticalSection(&playlistLock);
     if (index >= playlist.count) {
         LeaveCriticalSection(&playlistLock);
         return;
     }
-    free(playlist.files[index]);
+    free(playlist.files[index]);  // Free filename string
+    // Shift remaining entries left to fill gap
     for (size_t i = index; i < playlist.count - 1; ++i) {
         playlist.files[i] = playlist.files[i + 1];
     }
     playlist.count--;
+    // Remove from listbox UI
     SendMessage(hwndListBox, LB_DELETESTRING, index, 0);
 
+    // If removing currently playing track, signal skip but do not advance index
     if (index == currentTrackIndex) {
         skipToNext = 1;
-        nextPressed = 0;  // Remove: do NOT advance index here, playlist shifted left
+        nextPressed = 0;  // Removing track, so do not increment currentTrackIndex
     } else if (index < currentTrackIndex && currentTrackIndex > 0) {
+        // Adjust currentTrackIndex if removal before current track
         currentTrackIndex--;
     }
     LeaveCriticalSection(&playlistLock);
 }
 
+// Frees all playlist memory on shutdown
 void FreePlaylist() {
     EnterCriticalSection(&playlistLock);
     for (size_t i = 0; i < playlist.count; i++) {
@@ -88,17 +109,19 @@ void FreePlaylist() {
     LeaveCriticalSection(&playlistLock);
 }
 
+// Playback thread function: continuously plays tracks from playlist queue
 DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
     (void)lpParam;
 
-    mpg123_init();
+    mpg123_init();  // Initialize mpg123 decoder
     mpg123_handle *mh = mpg123_new(NULL, NULL);
     if (!mh) return 0;
-    mpg123_format_all(mh);
+    mpg123_format_all(mh);  // Enable all formats
 
-    PaError err = Pa_Initialize();
+    PaError err = Pa_Initialize();  // Initialize PortAudio
     if (err != paNoError) return 0;
 
+    // Buffer for decoded audio data
     unsigned char *buffer = malloc(FRAMES_PER_BUFFER * 2 * sizeof(short) * 2);
     if (!buffer) return 0;
 
@@ -110,13 +133,14 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         EnterCriticalSection(&playlistLock);
         if (playlist.count == 0) {
             LeaveCriticalSection(&playlistLock);
-            Sleep(100);
+            Sleep(100);  // Wait if no tracks to play
             continue;
         }
         if (currentTrackIndex >= playlist.count) currentTrackIndex = 0;
-        char *file = _strdup(playlist.files[currentTrackIndex]);
+        char *file = _strdup(playlist.files[currentTrackIndex]);  // Copy current track filename
         LeaveCriticalSection(&playlistLock);
 
+        // Open and prepare MP3 file for decoding
         if (mpg123_open(mh, file) != MPG123_OK) {
             free(file);
             EnterCriticalSection(&playlistLock);
@@ -125,6 +149,7 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
             continue;
         }
 
+        // Get audio format info (sample rate, channels, encoding)
         long rate;
         int channels, encoding;
         if (mpg123_getformat(mh, &rate, &channels, &encoding) != MPG123_OK || encoding != MPG123_ENC_SIGNED_16) {
@@ -136,11 +161,13 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
             continue;
         }
 
+        // If audio stream open, stop and close before opening new stream
         if (stream) {
             Pa_StopStream(stream);
             Pa_CloseStream(stream);
             stream = NULL;
         }
+        // Open PortAudio stream with audio format parameters
         err = Pa_OpenDefaultStream(&stream, 0, channels, paInt16, rate,
                                    FRAMES_PER_BUFFER, NULL, NULL);
         if (err != paNoError) {
@@ -151,8 +178,9 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
             LeaveCriticalSection(&playlistLock);
             continue;
         }
-        Pa_StartStream(stream);
+        Pa_StartStream(stream);  // Start audio playback stream
 
+        // Update window title to show now playing track
         char nowPlaying[512];
         snprintf(nowPlaying, sizeof(nowPlaying), "Playing: %s", file);
         SetWindowText(hwndMain, nowPlaying);
@@ -161,11 +189,12 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         int ret;
         skipToNext = 0;
 
+        // Read decoded audio data and play until track ends or skip/stop signaled
         while (!skipToNext && !stopPlayback && (ret = mpg123_read(mh, buffer, FRAMES_PER_BUFFER * channels * sizeof(short), &done)) == MPG123_OK) {
-            while (isPaused && !stopPlayback) Sleep(100);
+            while (isPaused && !stopPlayback) Sleep(100);  // Pause playback if requested
             if (done > 0 && !stopPlayback) {
                 size_t samples = done / (sizeof(short) * channels);
-                err = Pa_WriteStream(stream, buffer, samples);
+                err = Pa_WriteStream(stream, buffer, samples);  // Write audio data to output
                 if (err != paNoError) break;
             }
         }
@@ -175,15 +204,16 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
 
         EnterCriticalSection(&playlistLock);
         if (playlist.count > 0) {
+            // Advance track index if Next button pressed or normal track end
             if (nextPressed) {
                 currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
                 nextPressed = 0;
             } else if (!skipToNext) {
                 currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
             }
-            // if skipToNext and nextPressed == 0 (remove case), do NOT advance index here
+            // If skipToNext and nextPressed==0 (Remove button), do NOT advance index here
         } else {
-            currentTrackIndex = 0; // reset if playlist empty
+            currentTrackIndex = 0;  // Reset if playlist empty
         }
         LeaveCriticalSection(&playlistLock);
     }
@@ -197,10 +227,11 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
     isPaused = 0;
     stopPlayback = 0;
 
-    SetWindowText(hwndMain, "MP3 Player");
+    SetWindowText(hwndMain, "MP3 Player");  // Reset window title when stopped
     return 0;
 }
 
+// Opens a file dialog to select MP3 files and adds them to the playlist
 void OpenFileDialogAndAddFiles(HWND hwnd) {
     static char filesBuffer[8192];
     OPENFILENAME ofn = { sizeof(ofn) };
@@ -216,9 +247,11 @@ void OpenFileDialogAndAddFiles(HWND hwnd) {
         strcpy(directory, ptr);
         ptr += strlen(ptr) + 1;
 
+        // Single file selected
         if (*ptr == 0) {
             AddToPlaylist(directory);
         } else {
+            // Multiple files selected, combine directory with each filename
             while (*ptr) {
                 char fullpath[MAX_PATH];
                 snprintf(fullpath, sizeof(fullpath), "%s\\%s", directory, ptr);
@@ -227,6 +260,7 @@ void OpenFileDialogAndAddFiles(HWND hwnd) {
             }
         }
 
+        // Start playback thread if not already playing
         if (!isPlaying) {
             stopPlayback = 0;
             currentTrackIndex = 0;
@@ -237,12 +271,14 @@ void OpenFileDialogAndAddFiles(HWND hwnd) {
     }
 }
 
+// Toggles pause/resume playback state
 void TogglePause() {
     if (!isPlaying) return;
     isPaused = !isPaused;
     SetWindowText(hwndPauseBtn, isPaused ? "Resume" : "Pause");
 }
 
+// Signals playback thread to skip to next track
 void SkipToNext() {
     if (isPlaying) {
         skipToNext = 1;
@@ -250,11 +286,13 @@ void SkipToNext() {
     }
 }
 
+// Removes the selected track from the playlist
 void RemoveSelectedFromQueue() {
     int sel = SendMessage(hwndListBox, LB_GETCURSEL, 0, 0);
     if (sel != LB_ERR) RemoveFromPlaylist((size_t)sel);
 }
 
+// Main window message handler
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_COMMAND:
@@ -266,9 +304,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
         case WM_CLOSE:
-            stopPlayback = 1;
+            stopPlayback = 1;  // Signal playback thread to stop
             if (playThread) {
-                WaitForSingleObject(playThread, 3000);
+                WaitForSingleObject(playThread, 3000);  // Wait for thread exit
                 CloseHandle(playThread);
                 playThread = NULL;
             }
@@ -285,6 +323,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
+// Program entry point: creates window, controls, and enters message loop
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) {
     InitializeCriticalSection(&playlistLock);
 
@@ -299,6 +338,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                             CW_USEDEFAULT, CW_USEDEFAULT, 400, 300,
                             NULL, NULL, hInst, NULL);
 
+    // Create control buttons and listbox
     CreateWindow("BUTTON", "Open", WS_VISIBLE | WS_CHILD,
                  10, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_OPEN, hInst, NULL);
 
