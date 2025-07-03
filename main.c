@@ -16,11 +16,13 @@
 #define ID_BUTTON_REMOVE 4
 #define ID_LISTBOX_QUEUE 5
 #define ID_BUTTON_SHUFFLE 6
+#define ID_BUTTON_CLEAR 7
+
 
 #define FRAMES_PER_BUFFER 4096  // Buffer size for audio playback
 
 // Window handles for controls
-HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox, hwndShuffleBtn;
+HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox, hwndShuffleBtn, hwndClearBtn;
 
 // Thread handle for playback
 HANDLE playThread = NULL;
@@ -188,9 +190,14 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         Pa_StartStream(stream);  // Start audio playback stream
 
         // Update window title to show now playing track
+        const char *filename = file;
+        const char *lastSlash = strrchr(filename, '\\');
+        if (lastSlash) filename = lastSlash + 1;
+
         char nowPlaying[512];
-        snprintf(nowPlaying, sizeof(nowPlaying), "Playing: %s", file);
+        snprintf(nowPlaying, sizeof(nowPlaying), "Playing: %s", filename);
         SetWindowText(hwndMain, nowPlaying);
+
 
         size_t done;
         int ret;
@@ -333,6 +340,25 @@ void ShufflePlaylist() {
     LeaveCriticalSection(&playlistLock);
 }
 
+// Clear the playlist 
+void ClearPlaylist() {
+    EnterCriticalSection(&playlistLock);
+
+    for (size_t i = 0; i < playlist.count; i++) {
+        free(playlist.files[i]);
+    }
+    playlist.count = 0;
+
+    SendMessage(hwndListBox, LB_RESETCONTENT, 0, 0);
+
+    LeaveCriticalSection(&playlistLock);
+
+    currentTrackIndex = 0;
+    skipToNext = 1;     // Stop current track playback immediately
+    nextPressed = 0;    // Don't auto-advance index
+    SetWindowText(hwndMain, "MP3 Player"); // Reset window title
+}
+
 
 // Main window message handler
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -344,6 +370,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case ID_BUTTON_NEXT: SkipToNext(); break;
                 case ID_BUTTON_REMOVE: RemoveSelectedFromQueue(); break;
                 case ID_BUTTON_SHUFFLE: ShufflePlaylist(); break;
+                case ID_BUTTON_CLEAR: ClearPlaylist(); break;
 
             }
             break;
@@ -397,10 +424,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                                  280, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_REMOVE, hInst, NULL);
 
     hwndListBox = CreateWindow("LISTBOX", NULL, WS_VISIBLE | WS_CHILD | WS_BORDER | LBS_NOTIFY,
-                               10, 90, 360, 200, hwndMain, (HMENU)ID_LISTBOX_QUEUE, hInst, NULL);
+                               10, 90, 360, 150, hwndMain, (HMENU)ID_LISTBOX_QUEUE, hInst, NULL);
 
     hwndShuffleBtn = CreateWindow("BUTTON", "Shuffle", WS_VISIBLE | WS_CHILD,
                  280, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_SHUFFLE, hInst, NULL);
+
+    hwndClearBtn = CreateWindow("BUTTON", "Clear Queue", WS_VISIBLE | WS_CHILD,
+                            190, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_CLEAR, hInst, NULL);
+
 
     ShowWindow(hwndMain, nCmdShow);
     UpdateWindow(hwndMain);
