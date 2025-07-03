@@ -7,6 +7,7 @@
 #include <portaudio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>  // for srand(time(NULL)) and rand()
 
 // Control IDs for buttons and listbox
 #define ID_BUTTON_OPEN   1
@@ -14,11 +15,12 @@
 #define ID_BUTTON_NEXT   3
 #define ID_BUTTON_REMOVE 4
 #define ID_LISTBOX_QUEUE 5
+#define ID_BUTTON_SHUFFLE 6
 
 #define FRAMES_PER_BUFFER 4096  // Buffer size for audio playback
 
 // Window handles for controls
-HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox;
+HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox, hwndShuffleBtn;
 
 // Thread handle for playback
 HANDLE playThread = NULL;
@@ -47,9 +49,8 @@ Playlist playlist = { NULL, 0, 0 };
 CRITICAL_SECTION playlistLock;
 
 // Adds a file path to the playlist and updates the listbox UI
-void AddToPlaylist(const char *filename) {
+void AddToPlaylist(const char *filepath) {
     EnterCriticalSection(&playlistLock);
-    // Expand playlist array if needed
     if (playlist.count == playlist.capacity) {
         size_t newCap = playlist.capacity ? playlist.capacity * 2 : 4;
         char **newFiles = realloc(playlist.files, newCap * sizeof(char *));
@@ -61,13 +62,19 @@ void AddToPlaylist(const char *filename) {
         playlist.files = newFiles;
         playlist.capacity = newCap;
     }
-    // Duplicate filename string and add to playlist array
-    playlist.files[playlist.count] = _strdup(filename);
-    // Add filename to visible listbox
+    // Store full path for playback
+    playlist.files[playlist.count] = _strdup(filepath);
+
+    // Extract filename from path to show in listbox
+    const char *filename = filepath;
+    const char *lastSlash = strrchr(filepath, '\\'); // find last backslash
+    if (lastSlash) filename = lastSlash + 1;  // move past last slash
+
     SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)filename);
     playlist.count++;
     LeaveCriticalSection(&playlistLock);
 }
+
 
 // Removes the file at index from playlist and updates listbox UI
 void RemoveFromPlaylist(size_t index) {
@@ -292,6 +299,41 @@ void RemoveSelectedFromQueue() {
     if (sel != LB_ERR) RemoveFromPlaylist((size_t)sel);
 }
 
+// Shuffles the playlist
+void ShufflePlaylist() {
+    EnterCriticalSection(&playlistLock);
+    if (playlist.count <= 1) {
+        LeaveCriticalSection(&playlistLock);
+        return; // nothing to shuffle
+    }
+
+    // Fisher-Yates shuffle
+    srand((unsigned int)time(NULL));
+    for (size_t i = playlist.count - 1; i > 0; i--) {
+        size_t j = rand() % (i + 1);
+        char *temp = playlist.files[i];
+        playlist.files[i] = playlist.files[j];
+        playlist.files[j] = temp;
+    }
+
+    SendMessage(hwndListBox, LB_RESETCONTENT, 0, 0);
+    for (size_t i = 0; i < playlist.count; i++) {
+    // Show filename only
+    const char *filename = playlist.files[i];
+    const char *lastSlash = strrchr(filename, '\\');
+    if (lastSlash) filename = lastSlash + 1;
+    SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)filename);
+}
+
+
+    currentTrackIndex = 0;
+    nextPressed = 1;    // Tell playback thread to advance and update playing track immediately
+    skipToNext = 1;     // Trigger playback to skip current track and reload new track
+
+    LeaveCriticalSection(&playlistLock);
+}
+
+
 // Main window message handler
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
@@ -301,6 +343,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case ID_BUTTON_PAUSE: TogglePause(); break;
                 case ID_BUTTON_NEXT: SkipToNext(); break;
                 case ID_BUTTON_REMOVE: RemoveSelectedFromQueue(); break;
+                case ID_BUTTON_SHUFFLE: ShufflePlaylist(); break;
+
             }
             break;
         case WM_CLOSE:
@@ -342,6 +386,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     CreateWindow("BUTTON", "Open", WS_VISIBLE | WS_CHILD,
                  10, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_OPEN, hInst, NULL);
 
+
     hwndPauseBtn = CreateWindow("BUTTON", "Pause", WS_VISIBLE | WS_CHILD | WS_DISABLED,
                                 100, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_PAUSE, hInst, NULL);
 
@@ -352,7 +397,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                                  280, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_REMOVE, hInst, NULL);
 
     hwndListBox = CreateWindow("LISTBOX", NULL, WS_VISIBLE | WS_CHILD | WS_BORDER | LBS_NOTIFY,
-                               10, 50, 360, 200, hwndMain, (HMENU)ID_LISTBOX_QUEUE, hInst, NULL);
+                               10, 90, 360, 200, hwndMain, (HMENU)ID_LISTBOX_QUEUE, hInst, NULL);
+
+    hwndShuffleBtn = CreateWindow("BUTTON", "Shuffle", WS_VISIBLE | WS_CHILD,
+                 280, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_SHUFFLE, hInst, NULL);
 
     ShowWindow(hwndMain, nCmdShow);
     UpdateWindow(hwndMain);
