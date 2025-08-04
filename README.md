@@ -10,7 +10,7 @@ This project is developed primarily for personal daily use; however, it is avail
 
 ## Installation
 
-Download the following files from the [Releases](https://github.com/yourusername/mp3x/releases) page or directly from this repository:
+Download the following files from the [Releases](https://github.com/usafdev/mp3x/releases) page or directly from this repository:
 
 - `player.exe`
 - `libportaudio.dll`
