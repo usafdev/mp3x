@@ -18,7 +18,7 @@ Download the following files from the [Releases](https://github.com/yourusername
 
 ### Setup
 
-1. Place all downloaded files in the **same directory**.
+Place all downloaded files in the **same directory**.
 
 ### Running the Player
 
