@@ -1,6 +1,6 @@
-# mp3x
+# MP3X
 
-mp3x is a lightweight and resource-efficient MP3 player optimised for minimal CPU and RAM usage, making it ideal for gaming and other performance-sensitive environments.
+MP3X is a lightweight and resource-efficient MP3 player optimised for minimal CPU and RAM usage, making it ideal for gaming and other performance-sensitive environments.
 
 ## Note
 
