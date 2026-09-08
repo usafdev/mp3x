@@ -2,9 +2,16 @@
 
 MP3X is a lightweight and resource-efficient MP3 player optimised for minimal CPU and RAM usage, making it ideal for gaming and other performance-sensitive environments.
 
+![GUI](assets/gui_preview.png)
 ## Note
 
-This project is developed primarily for personal daily use; however, it is available for anyone interested in using it.
+This project is developed primarily for personal daily use; however, it is available for anyone interested in using it.<br>
+
+Estimated Resource Usage:<br>
+1 song in queue: 11.8MB RAM<br>
+100 songs in queue: 18.9MB RAM<br>
+
+![RESOURCES](assets/resource_usage.png)
 
 ## Installation
 
