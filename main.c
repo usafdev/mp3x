@@ -17,10 +17,11 @@
 #define ID_BUTTON_SHUFFLE 6
 #define ID_BUTTON_CLEAR   7
 #define ID_SLIDER_VOLUME  8
+#define ID_BUTTON_BACK    9
 #define FRAMES_PER_BUFFER 4096
 
 HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox;
-HWND hwndShuffleBtn, hwndClearBtn, hwndVolumeSlider, hwndVolumeLabel;
+HWND hwndBackBtn, hwndShuffleBtn, hwndClearBtn, hwndVolumeSlider, hwndVolumeLabel;
 HANDLE playThread = NULL;
 PaStream *stream = NULL;
 
@@ -29,6 +30,7 @@ volatile int isPaused = 0;
 volatile int stopPlayback = 0;
 volatile int skipToNext = 0;
 volatile int nextPressed = 0;
+volatile int backPressed = 0;
 volatile float volumeLevel = 1.0f;
 size_t currentTrackIndex = 0;
 
@@ -198,7 +200,9 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
 
         EnterCriticalSection(&playlistLock);
         if (playlist.count > 0) {
-            if (nextPressed) {
+            if (backPressed) {
+                backPressed = 0;
+            } else if (nextPressed) {
                 currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
                 nextPressed = 0;
             } else if (!skipToNext) {
@@ -268,6 +272,22 @@ void SkipToNext() {
     if (isPlaying) {
         skipToNext = 1;
         nextPressed = 1;
+        backPressed = 0;
+    }
+}
+
+void SkipToPrevious() {
+    if (isPlaying) {
+        EnterCriticalSection(&playlistLock);
+        if (playlist.count > 0) {
+            currentTrackIndex = currentTrackIndex == 0
+                ? playlist.count - 1
+                : currentTrackIndex - 1;
+            backPressed = 1;
+            nextPressed = 0;
+            skipToNext = 1;
+        }
+        LeaveCriticalSection(&playlistLock);
     }
 }
 
@@ -294,7 +314,8 @@ void ShufflePlaylist() {
         }
 
         currentTrackIndex = 0;
-        nextPressed = 1;
+        nextPressed = 0;
+        backPressed = 0;
         skipToNext = 1;
     }
     LeaveCriticalSection(&playlistLock);
@@ -321,6 +342,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             switch (LOWORD(wParam)) {
                 case ID_BUTTON_OPEN: OpenFileDialogAndAddFiles(hwnd); break;
                 case ID_BUTTON_PAUSE: TogglePause(); break;
+                case ID_BUTTON_BACK: SkipToPrevious(); break;
                 case ID_BUTTON_NEXT: SkipToNext(); break;
                 case ID_BUTTON_REMOVE: RemoveSelectedFromQueue(); break;
                 case ID_BUTTON_SHUFFLE: ShufflePlaylist(); break;
@@ -374,11 +396,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.lpszClassName = "MP3Window";
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     RegisterClass(&wc);
 
     hwndMain = CreateWindow(wc.lpszClassName, "MP3 Player",
                            WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
-                           CW_USEDEFAULT, CW_USEDEFAULT, 400, 300,
+                           CW_USEDEFAULT, CW_USEDEFAULT, 500, 300,
                            NULL, NULL, hInst, NULL);
 
     CreateWindow("BUTTON", "Open", WS_VISIBLE|WS_CHILD,
@@ -387,11 +410,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     hwndPauseBtn = CreateWindow("BUTTON", "Pause", WS_VISIBLE|WS_CHILD|WS_DISABLED,
                                100, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_PAUSE, hInst, NULL);
 
+    hwndBackBtn = CreateWindow("BUTTON", "Back", WS_VISIBLE|WS_CHILD,
+                              190, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_BACK, hInst, NULL);
+
     hwndNextBtn = CreateWindow("BUTTON", "Next", WS_VISIBLE|WS_CHILD,
-                              190, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_NEXT, hInst, NULL);
+                              280, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_NEXT, hInst, NULL);
 
     hwndRemoveBtn = CreateWindow("BUTTON", "Remove", WS_VISIBLE|WS_CHILD,
-                                280, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_REMOVE, hInst, NULL);
+                                370, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_REMOVE, hInst, NULL);
 
     CreateWindow("STATIC", "Volume:", WS_VISIBLE|WS_CHILD,
                  10, 50, 50, 20, hwndMain, (HMENU)-1, hInst, NULL);
@@ -406,10 +432,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                                   180, 50, 40, 20, hwndMain, (HMENU)-1, hInst, NULL);
 
     hwndClearBtn = CreateWindow("BUTTON", "Clear Queue", WS_VISIBLE|WS_CHILD,
-                               190, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_CLEAR, hInst, NULL);
+                               225, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_CLEAR, hInst, NULL);
 
     hwndShuffleBtn = CreateWindow("BUTTON", "Shuffle", WS_VISIBLE|WS_CHILD,
-                                 280, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_SHUFFLE, hInst, NULL);
+                                 310, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_SHUFFLE, hInst, NULL);
 
     hwndListBox = CreateWindow("LISTBOX", NULL,
                               WS_VISIBLE|WS_CHILD|WS_BORDER|LBS_NOTIFY,

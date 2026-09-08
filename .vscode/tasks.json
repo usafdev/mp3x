@@ -10,13 +10,15 @@
                 "-g",
                 "${file}",
                 "-o",
-                "${fileDirname}\\mp3player.exe",
+                "${fileDirname}\\player.exe",
                 "-IC:/msys64/mingw64/include",
                 "-LC:/msys64/mingw64/lib",
                 "-lmpg123",
                 "-lportaudio",
                 "-lwinmm",
-                "-static"
+                "-lcomdlg32",
+                "-lcomctl32",
+                "-mwindows"
             ],
             "group": "build",
             "problemMatcher": [
