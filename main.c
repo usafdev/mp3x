@@ -8,6 +8,7 @@
 #include <time.h>
 #include <commctrl.h>
 #include <windowsx.h>
+#include <dwmapi.h>
 
 #define ID_BUTTON_OPEN    1
 #define ID_BUTTON_PAUSE   2
@@ -19,9 +20,22 @@
 #define ID_SLIDER_VOLUME  8
 #define ID_BUTTON_BACK    9
 #define FRAMES_PER_BUFFER 4096
+#define WINDOW_COLOR      RGB(24, 24, 24)
+#define BUTTON_COLOR      RGB(48, 48, 48)
+#define BUTTON_BORDER     RGB(82, 82, 82)
+#define PLAYLIST_COLOR    RGB(36, 36, 36)
+#define TEXT_COLOR        RGB(224, 224, 224)
+#define BUTTON_TEXT_COLOR RGB(224, 224, 224)
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#define DWMWA_CAPTION_COLOR 35
+#define DWMWA_TEXT_COLOR 36
 
 HWND hwndMain, hwndPauseBtn, hwndNextBtn, hwndRemoveBtn, hwndListBox;
 HWND hwndBackBtn, hwndShuffleBtn, hwndClearBtn, hwndVolumeSlider, hwndVolumeLabel;
+HBRUSH hwndBackgroundBrush;
+HBRUSH hwndButtonBrush;
+HBRUSH hwndPlaylistBrush;
+HBRUSH hwndButtonBorderBrush;
 HANDLE playThread = NULL;
 PaStream *stream = NULL;
 
@@ -102,6 +116,24 @@ float GetCurrentVolume() {
     float vol = volumeLevel;
     LeaveCriticalSection(&playlistLock);
     return vol;
+}
+
+void DrawButton(const DRAWITEMSTRUCT *drawItem) {
+    RECT rect = drawItem->rcItem;
+    HBRUSH brush = (drawItem->itemState & ODS_DISABLED)
+        ? GetSysColorBrush(COLOR_BTNFACE)
+        : hwndButtonBrush;
+    FillRect(drawItem->hDC, &rect, brush);
+    FrameRect(drawItem->hDC, &rect, hwndButtonBorderBrush);
+
+    char text[64];
+    GetWindowText(drawItem->hwndItem, text, sizeof(text));
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    SetTextColor(drawItem->hDC,
+                 (drawItem->itemState & ODS_DISABLED)
+                     ? GetSysColor(COLOR_GRAYTEXT)
+                     : BUTTON_TEXT_COLOR);
+    DrawText(drawItem->hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
@@ -366,6 +398,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 LeaveCriticalSection(&playlistLock);
             }
             break;
+
+        case WM_DRAWITEM:
+            if (wParam != ID_LISTBOX_QUEUE) {
+                DrawButton((const DRAWITEMSTRUCT *)lParam);
+                return TRUE;
+            }
+            break;
+
+        case WM_CTLCOLORSTATIC:
+            SetTextColor((HDC)wParam, TEXT_COLOR);
+            SetBkColor((HDC)wParam, WINDOW_COLOR);
+            return (LRESULT)hwndBackgroundBrush;
+
+        case WM_CTLCOLORBTN:
+            SetTextColor((HDC)wParam, BUTTON_TEXT_COLOR);
+            SetBkColor((HDC)wParam, BUTTON_COLOR);
+            return (LRESULT)hwndButtonBrush;
+
+        case WM_CTLCOLORLISTBOX:
+            SetTextColor((HDC)wParam, TEXT_COLOR);
+            SetBkColor((HDC)wParam, PLAYLIST_COLOR);
+            return (LRESULT)hwndPlaylistBrush;
         
         case WM_CLOSE:
             stopPlayback = 1;
@@ -378,6 +432,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         case WM_DESTROY:
             FreePlaylist();
+            DeleteObject(hwndBackgroundBrush);
+            DeleteObject(hwndButtonBrush);
+            DeleteObject(hwndPlaylistBrush);
+            DeleteObject(hwndButtonBorderBrush);
             DeleteCriticalSection(&playlistLock);
             PostQuitMessage(0);
             break;
@@ -396,7 +454,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.lpszClassName = "MP3Window";
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    hwndBackgroundBrush = CreateSolidBrush(WINDOW_COLOR);
+    hwndButtonBrush = CreateSolidBrush(BUTTON_COLOR);
+    hwndPlaylistBrush = CreateSolidBrush(PLAYLIST_COLOR);
+    hwndButtonBorderBrush = CreateSolidBrush(BUTTON_BORDER);
+    wc.hbrBackground = hwndBackgroundBrush;
     RegisterClass(&wc);
 
     hwndMain = CreateWindow(wc.lpszClassName, "MP3 Player",
@@ -404,19 +466,29 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                            CW_USEDEFAULT, CW_USEDEFAULT, 500, 300,
                            NULL, NULL, hInst, NULL);
 
-    CreateWindow("BUTTON", "Open", WS_VISIBLE|WS_CHILD,
+    COLORREF titleBarColor = RGB(24, 24, 24);
+    COLORREF titleTextColor = RGB(224, 224, 224);
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(hwndMain, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                          &darkMode, sizeof(darkMode));
+    DwmSetWindowAttribute(hwndMain, DWMWA_CAPTION_COLOR,
+                          &titleBarColor, sizeof(titleBarColor));
+    DwmSetWindowAttribute(hwndMain, DWMWA_TEXT_COLOR,
+                          &titleTextColor, sizeof(titleTextColor));
+
+    CreateWindow("BUTTON", "Open", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                  10, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_OPEN, hInst, NULL);
 
-    hwndPauseBtn = CreateWindow("BUTTON", "Pause", WS_VISIBLE|WS_CHILD|WS_DISABLED,
+    hwndPauseBtn = CreateWindow("BUTTON", "Pause", WS_VISIBLE|WS_CHILD|WS_DISABLED|BS_OWNERDRAW,
                                100, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_PAUSE, hInst, NULL);
 
-    hwndBackBtn = CreateWindow("BUTTON", "Back", WS_VISIBLE|WS_CHILD,
+    hwndBackBtn = CreateWindow("BUTTON", "Back", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                               190, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_BACK, hInst, NULL);
 
-    hwndNextBtn = CreateWindow("BUTTON", "Next", WS_VISIBLE|WS_CHILD,
+    hwndNextBtn = CreateWindow("BUTTON", "Next", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                               280, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_NEXT, hInst, NULL);
 
-    hwndRemoveBtn = CreateWindow("BUTTON", "Remove", WS_VISIBLE|WS_CHILD,
+    hwndRemoveBtn = CreateWindow("BUTTON", "Remove", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                                 370, 10, 80, 30, hwndMain, (HMENU)ID_BUTTON_REMOVE, hInst, NULL);
 
     CreateWindow("STATIC", "Volume:", WS_VISIBLE|WS_CHILD,
@@ -431,10 +503,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     hwndVolumeLabel = CreateWindow("STATIC", "100%", WS_VISIBLE|WS_CHILD,
                                   180, 50, 40, 20, hwndMain, (HMENU)-1, hInst, NULL);
 
-    hwndClearBtn = CreateWindow("BUTTON", "Clear Queue", WS_VISIBLE|WS_CHILD,
+    hwndClearBtn = CreateWindow("BUTTON", "Clear", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                                225, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_CLEAR, hInst, NULL);
 
-    hwndShuffleBtn = CreateWindow("BUTTON", "Shuffle", WS_VISIBLE|WS_CHILD,
+    hwndShuffleBtn = CreateWindow("BUTTON", "Shuffle", WS_VISIBLE|WS_CHILD|BS_OWNERDRAW,
                                  310, 50, 80, 30, hwndMain, (HMENU)ID_BUTTON_SHUFFLE, hInst, NULL);
 
     hwndListBox = CreateWindow("LISTBOX", NULL,
