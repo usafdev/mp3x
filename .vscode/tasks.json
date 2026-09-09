@@ -2,13 +2,25 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Compile MP3X Windows resources",
+            "type": "shell",
+            "command": "C:/msys64/mingw64/bin/windres.exe",
+            "args": [
+                "${fileDirname}\\resource.rc",
+                "${fileDirname}\\resource.o"
+            ],
+            "problemMatcher": []
+        },
+        {
             "label": "Build MP3 Player (MINGW64)",
             "type": "shell",
             "command": "C:/msys64/mingw64/bin/gcc.exe",
+            "dependsOn": "Compile MP3X Windows resources",
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
                 "${file}",
+                "${fileDirname}\\resource.o",
                 "-o",
                 "${fileDirname}\\player.exe",
                 "-IC:/msys64/mingw64/include",
@@ -18,6 +30,8 @@
                 "-lwinmm",
                 "-lcomdlg32",
                 "-lcomctl32",
+                "-ldwmapi",
+                "-lgdi32",
                 "-mwindows"
             ],
             "group": "build",

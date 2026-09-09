@@ -12,6 +12,7 @@
 #include <commctrl.h>
 #include <windowsx.h>
 #include <dwmapi.h>
+#include "resource.h"
 
 #define ID_BUTTON_OPEN    1
 #define ID_BUTTON_PAUSE   2
@@ -483,6 +484,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.lpszClassName = "MP3Window";
+    wc.hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_APP_ICON));
     hwndBackgroundBrush = CreateSolidBrush(WINDOW_COLOR);
     hwndButtonBrush = CreateSolidBrush(BUTTON_COLOR);
     hwndPlaylistBrush = CreateSolidBrush(PLAYLIST_COLOR);
@@ -494,6 +496,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nCmdShow) 
                            WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
                            CW_USEDEFAULT, CW_USEDEFAULT, 500, 300,
                            NULL, NULL, hInst, NULL);
+    SendMessage(hwndMain, WM_SETICON, ICON_BIG,
+                (LPARAM)LoadIcon(hInst, MAKEINTRESOURCE(IDI_APP_ICON)));
+    SendMessage(hwndMain, WM_SETICON, ICON_SMALL,
+                (LPARAM)LoadIcon(hInst, MAKEINTRESOURCE(IDI_APP_ICON)));
 
     COLORREF titleBarColor = RGB(24, 24, 24);
     COLORREF titleTextColor = RGB(224, 224, 224);
