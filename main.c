@@ -6,6 +6,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <wchar.h>
+#include <io.h>
+#include <fcntl.h>
 #include <commctrl.h>
 #include <windowsx.h>
 #include <dwmapi.h>
@@ -49,7 +52,7 @@ volatile float volumeLevel = 1.0f;
 size_t currentTrackIndex = 0;
 
 typedef struct {
-    char **files;
+    wchar_t **files;
     size_t count;
     size_t capacity;
 } Playlist;
@@ -57,11 +60,18 @@ typedef struct {
 Playlist playlist = { NULL, 0, 0 };
 CRITICAL_SECTION playlistLock;
 
-void AddToPlaylist(const char *filepath) {
+static void DisplayFilename(const wchar_t *filepath, char *display, size_t displaySize) {
+    const wchar_t *filename = wcsrchr(filepath, L'\\');
+    filename = filename ? filename + 1 : filepath;
+    WideCharToMultiByte(CP_UTF8, 0, filename, -1, display, (int)displaySize, NULL, NULL);
+    display[displaySize - 1] = '\0';
+}
+
+void AddToPlaylist(const wchar_t *filepath) {
     EnterCriticalSection(&playlistLock);
     if (playlist.count == playlist.capacity) {
         size_t newCap = playlist.capacity ? playlist.capacity * 2 : 4;
-        char **newFiles = realloc(playlist.files, newCap * sizeof(char *));
+        wchar_t **newFiles = realloc(playlist.files, newCap * sizeof(wchar_t *));
         if (!newFiles) {
             LeaveCriticalSection(&playlistLock);
             MessageBox(hwndMain, "Memory allocation failed", "Error", MB_OK|MB_ICONERROR);
@@ -70,9 +80,15 @@ void AddToPlaylist(const char *filepath) {
         playlist.files = newFiles;
         playlist.capacity = newCap;
     }
-    playlist.files[playlist.count] = _strdup(filepath);
-    const char *filename = strrchr(filepath, '\\');
-    SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)(filename ? filename + 1 : filepath));
+    playlist.files[playlist.count] = _wcsdup(filepath);
+    if (!playlist.files[playlist.count]) {
+        LeaveCriticalSection(&playlistLock);
+        MessageBox(hwndMain, "Memory allocation failed", "Error", MB_OK|MB_ICONERROR);
+        return;
+    }
+    char displayName[MAX_PATH * 3];
+    DisplayFilename(filepath, displayName, sizeof(displayName));
+    SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)displayName);
     playlist.count++;
     LeaveCriticalSection(&playlistLock);
 }
@@ -160,13 +176,17 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
             continue;
         }
         if (currentTrackIndex >= playlist.count) currentTrackIndex = 0;
-        char *file = _strdup(playlist.files[currentTrackIndex]);
+        wchar_t *file = _wcsdup(playlist.files[currentTrackIndex]);
         LeaveCriticalSection(&playlistLock);
 
-        if (mpg123_open(mh, file) != MPG123_OK) {
+        int fd = _wopen(file, _O_RDONLY | _O_BINARY);
+        if (fd == -1 || mpg123_open_fd(mh, fd) != MPG123_OK) {
+            if (fd != -1) _close(fd);
             free(file);
             EnterCriticalSection(&playlistLock);
-            currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            if (playlist.count > 0) {
+                currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            }
             LeaveCriticalSection(&playlistLock);
             continue;
         }
@@ -175,9 +195,12 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         int channels, encoding;
         if (mpg123_getformat(mh, &rate, &channels, &encoding) != MPG123_OK || encoding != MPG123_ENC_SIGNED_16) {
             mpg123_close(mh);
+            _close(fd);
             free(file);
             EnterCriticalSection(&playlistLock);
-            currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            if (playlist.count > 0) {
+                currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            }
             LeaveCriticalSection(&playlistLock);
             continue;
         }
@@ -191,17 +214,21 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         err = Pa_OpenDefaultStream(&stream, 0, channels, paInt16, rate, FRAMES_PER_BUFFER, NULL, NULL);
         if (err != paNoError) {
             mpg123_close(mh);
+            _close(fd);
             free(file);
             EnterCriticalSection(&playlistLock);
-            currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            if (playlist.count > 0) {
+                currentTrackIndex = (currentTrackIndex + 1) % playlist.count;
+            }
             LeaveCriticalSection(&playlistLock);
             continue;
         }
         Pa_StartStream(stream);
 
-        const char *filename = strrchr(file, '\\');
+        char displayName[MAX_PATH * 3];
+        DisplayFilename(file, displayName, sizeof(displayName));
         char nowPlaying[512];
-        snprintf(nowPlaying, sizeof(nowPlaying), "Playing: %s", filename ? filename + 1 : file);
+        snprintf(nowPlaying, sizeof(nowPlaying), "Playing: %s", displayName);
         SetWindowText(hwndMain, nowPlaying);
 
         size_t done;
@@ -228,6 +255,7 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
         }
 
         mpg123_close(mh);
+        _close(fd);
         free(file);
 
         EnterCriticalSection(&playlistLock);
@@ -259,28 +287,28 @@ DWORD WINAPI PlayMP3Queue(LPVOID lpParam) {
 }
 
 void OpenFileDialogAndAddFiles(HWND hwnd) {
-    static char filesBuffer[8192];
-    OPENFILENAME ofn = { sizeof(ofn) };
+    static wchar_t filesBuffer[8192];
+    OPENFILENAMEW ofn = { sizeof(ofn) };
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = "MP3 Files\0*.mp3\0All Files\0*.*\0";
+    ofn.lpstrFilter = L"MP3 Files\0*.mp3\0All Files\0*.*\0";
     ofn.lpstrFile = filesBuffer;
-    ofn.nMaxFile = sizeof(filesBuffer);
+    ofn.nMaxFile = sizeof(filesBuffer) / sizeof(filesBuffer[0]);
     ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST;
 
-    if (GetOpenFileName(&ofn)) {
-        char *ptr = filesBuffer;
-        char directory[MAX_PATH];
-        strcpy(directory, ptr);
-        ptr += strlen(ptr) + 1;
+    if (GetOpenFileNameW(&ofn)) {
+        wchar_t *ptr = filesBuffer;
+        wchar_t directory[MAX_PATH];
+        wcscpy(directory, ptr);
+        ptr += wcslen(ptr) + 1;
 
         if (*ptr == 0) {
             AddToPlaylist(directory);
         } else {
             while (*ptr) {
-                char fullpath[MAX_PATH];
-                snprintf(fullpath, sizeof(fullpath), "%s\\%s", directory, ptr);
+                wchar_t fullpath[MAX_PATH];
+                swprintf(fullpath, sizeof(fullpath) / sizeof(fullpath[0]), L"%ls\\%ls", directory, ptr);
                 AddToPlaylist(fullpath);
-                ptr += strlen(ptr) + 1;
+                ptr += wcslen(ptr) + 1;
             }
         }
 
@@ -334,15 +362,16 @@ void ShufflePlaylist() {
         srand((unsigned)time(NULL));
         for (size_t i = playlist.count - 1; i > 0; i--) {
             size_t j = rand() % (i + 1);
-            char *temp = playlist.files[i];
+            wchar_t *temp = playlist.files[i];
             playlist.files[i] = playlist.files[j];
             playlist.files[j] = temp;
         }
 
         SendMessage(hwndListBox, LB_RESETCONTENT, 0, 0);
         for (size_t i = 0; i < playlist.count; i++) {
-            const char *filename = strrchr(playlist.files[i], '\\');
-            SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)(filename ? filename + 1 : playlist.files[i]));
+            char displayName[MAX_PATH * 3];
+            DisplayFilename(playlist.files[i], displayName, sizeof(displayName));
+            SendMessage(hwndListBox, LB_ADDSTRING, 0, (LPARAM)displayName);
         }
 
         currentTrackIndex = 0;
