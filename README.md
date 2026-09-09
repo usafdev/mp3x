@@ -12,6 +12,7 @@ This project is developed primarily for personal daily use; however, it is avail
 Estimated Resource Usage:<br>
 - 1 song in queue: 11.8MB RAM<br>
 - 100 songs in queue: 18.9MB RAM<br>
+- 0 songs in queue: 1.5MB RAM<br>
 
 ![RESOURCES](assets/resource_usage.png)
 
